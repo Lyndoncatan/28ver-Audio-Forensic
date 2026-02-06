@@ -1,0 +1,76 @@
+[00:00:05.566] Server  LOG     ✓ Ready in 4.5s
+[00:00:12.483] Server  LOG     ○ Compiling / ...
+[00:00:37.296] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:00:38.156] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:00:38.156] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
+[00:00:38.156] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.3.1","sv":"0.1.3","ts":1770386243109}
+[00:02:50.162] Server  LOG     [Forensic] Spawning: python "C:\Users\dondo\Desktop\MYCODES\4th version audio-forensic model\26ver-Audio-Forensic-Detector\scripts\mediapipe_audio_classifier.py" "C:\Users\dondo\AppData\Local\Temp\forensic_capture_1770386373974_wav_input.wav" "forensic_capture_1770386373974_wav"
+[00:03:07.141] Server  ERROR   INFO: 
+[00:03:07.142] Server  ERROR   Created TensorFlow Lite XNNPACK delegate for CPU.
+
+[00:03:07.158] Server  ERROR   W0000 00:00:1770386393.024139    9480 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+
+[00:03:07.253] Server  ERROR   --- Running Model: YAMNet / MediaPipe ---
+
+[00:03:07.254] Server  ERROR   [YAMNet] Time: 0.0s | Class: Animal Signal | Confidence: 0.8516 | Vol: -8.9dB
+[YAMNet] Time: 0.97s | Class: Fowl | Confidence: 0.668 | Vol: -19.9dB
+[YAMNet] Time: 1.95s | Class: Human Voice | Confidence: 0.5859 | Vol: -24.8dB
+[YAMNet] Time: 2.92s | Class: Human Voice | Confidence: 0.4141 | Vol: -35.2dB
+[YAMNet] Time: 3.9s | Class: Human Voice | Confidence: 0.1094 | Vol: -53.4dB
+[YAMNet] Time: 4.88s | Class: Human Voice | Confidence: 0.332 | Vol: -40.1dB
+[YAMNet] Time: 5.85s | Class: Sound effect | Confidence: 0.1992 | Vol: -48.0dB
+[YAMNet] Time: 6.83s | Class: Goose | Confidence: 0.1992 | Vol: -48.0dB
+[YAMNet] Time: 7.8s | Class: Animal Signal | Confidence: 0.4141 | Vol: -35.2dB
+[YAMNet] Time: 8.78s | Class: Human Voice | Confidence: 0.1094 | Vol: -53.4dB
+[YAMNet] Time: 9.75s | Class: Silence | Confidence: 0.2617 | Vol: -44.3dB
+[YAMNet] Time: 10.72s | Class: Silence | Confidence: 0.1992 | Vol: -48.0dB
+--- Classification Complete ---
+
+[00:03:08.495] Server  LOG     [Forensic] Spawning: python "C:\Users\dondo\Desktop\MYCODES\4th version audio-forensic model\26ver-Audio-Forensic-Detector\scripts\audio_separator.py" "C:\Users\dondo\AppData\Local\Temp\forensic_capture_1770386373974_wav_input.wav" "C:\Users\dondo\Desktop\MYCODES\4th version audio-forensic model\26ver-Audio-Forensic-Detector\public\separated_audio" "forensic_capture_1770386373974_wav" "C:\Users\dondo\AppData\Local\Temp\forensic_capture_1770386373974_wav_classification.json"
+[00:03:09.935] Server  ERROR   [Demucs] Loading model htdemucs...
+
+[00:03:17.578] Server  ERROR   [Demucs] Separating...
+
+[00:03:17.663] Server  ERROR     0%|                                                                                   | 0.0/11.7 [00:00<?, ?seconds/s]
+[00:03:32.997] Server  ERROR    50%|#####################################                                     | 5.85/11.7 [00:15<00:15,  2.62s/seconds]
+[00:03:44.174] Server  ERROR   100%|##########################################################################| 11.7/11.7 [00:26<00:00,  2.20s/seconds]
+[00:03:44.175] Server  ERROR   100%|##########################################################################| 11.7/11.7 [00:26<00:00,  2.27s/seconds]
+
+[00:03:44.245] Server  ERROR   [Demucs] Separation finished. Saving stems...
+
+[00:04:10.693] Browser LOG     Audio element already has audio context, skipping initialization
+[00:04:12.642] Server  LOG     [Forensic] Spawning: python "C:\Users\dondo\Desktop\MYCODES\4th version audio-forensic model\26ver-Audio-Forensic-Detector\scripts\mediapipe_audio_classifier.py" "C:\Users\dondo\AppData\Local\Temp\forensic_capture_1770386373974_wav_input.wav" "forensic_capture_1770386373974_wav"
+[00:04:27.810] Server  ERROR   INFO: 
+[00:04:27.811] Server  ERROR   Created TensorFlow Lite XNNPACK delegate for CPU.
+
+[00:04:27.823] Server  ERROR   W0000 00:00:1770386473.689539   20908 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+
+[00:04:27.901] Server  ERROR   --- Running Model: YAMNet / MediaPipe ---
+
+[00:04:27.902] Server  ERROR   [YAMNet] Time: 0.0s | Class: Animal Signal | Confidence: 0.8516 | Vol: -8.9dB
+[YAMNet] Time: 0.97s | Class: Fowl | Confidence: 0.668 | Vol: -19.9dB
+[YAMNet] Time: 1.95s | Class: Human Voice | Confidence: 0.5859 | Vol: -24.8dB
+[YAMNet] Time: 2.92s | Class: Human Voice | Confidence: 0.4141 | Vol: -35.2dB
+[YAMNet] Time: 3.9s | Class: Human Voice | Confidence: 0.1094 | Vol: -53.4dB
+[YAMNet] Time: 4.88s | Class: Human Voice | Confidence: 0.332 | Vol: -40.1dB
+[YAMNet] Time: 5.85s | Class: Sound effect | Confidence: 0.1992 | Vol: -48.0dB
+[YAMNet] Time: 6.83s | Class: Goose | Confidence: 0.1992 | Vol: -48.0dB
+[YAMNet] Time: 7.8s | Class: Animal Signal | Confidence: 0.4141 | Vol: -35.2dB
+[YAMNet] Time: 8.78s | Class: Human Voice | Confidence: 0.1094 | Vol: -53.4dB
+[YAMNet] Time: 9.75s | Class: Silence | Confidence: 0.2617 | Vol: -44.3dB
+[YAMNet] Time: 10.72s | Class: Silence | Confidence: 0.1992 | Vol: -48.0dB
+--- Classification Complete ---
+
+[00:04:28.832] Server  LOG     [Forensic] Spawning: python "C:\Users\dondo\Desktop\MYCODES\4th version audio-forensic model\26ver-Audio-Forensic-Detector\scripts\audio_separator.py" "C:\Users\dondo\AppData\Local\Temp\forensic_capture_1770386373974_wav_input.wav" "C:\Users\dondo\Desktop\MYCODES\4th version audio-forensic model\26ver-Audio-Forensic-Detector\public\separated_audio" "forensic_capture_1770386373974_wav" "C:\Users\dondo\AppData\Local\Temp\forensic_capture_1770386373974_wav_classification.json"
+[00:04:29.746] Server  ERROR   [Demucs] Loading model htdemucs...
+
+[00:04:34.769] Server  ERROR   [Demucs] Separating...
+
+[00:04:34.812] Server  ERROR     0%|                                                                                   | 0.0/11.7 [00:00<?, ?seconds/s]
+[00:04:51.593] Server  ERROR    50%|#####################################                                     | 5.85/11.7 [00:16<00:16,  2.87s/seconds]
+[00:05:01.271] Server  ERROR   100%|##########################################################################| 11.7/11.7 [00:26<00:00,  2.15s/seconds]
+[00:05:01.271] Server  ERROR   100%|##########################################################################| 11.7/11.7 [00:26<00:00,  2.26s/seconds]
+
+[00:05:01.317] Server  ERROR   [Demucs] Separation finished. Saving stems...
+
+[00:05:03.172] Browser LOG     Audio element already has audio context, skipping initialization

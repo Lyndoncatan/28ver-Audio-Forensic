@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: audio-forensic-detector
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: |
+      npm ci
+      npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://sdhnpipxvzykjhxqlxfc.supabase.co
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkaG5waXB4dnp5a2poeHFseGZjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyNzYzOTMsImV4cCI6MjA2OTg1MjM5M30.FU4iBRZNTcKJ2gOJMDSIVhwjEEngtt_yhKt1eFQhso4
+    disk:
+      name: audio-forensic-data
+      mountPath: /opt/render/project/data
+      sizeGB: 1

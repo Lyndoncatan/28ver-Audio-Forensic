@@ -1,0 +1,4 @@
+{
+  "/api/classify-audio/route": "app/api/classify-audio/route.js",
+  "/page": "app/page.js"
+}
