@@ -125,9 +125,13 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
         wav = (wav - ref.mean()) / ref.std()
         
         # Separate
-        print(f"[Demucs] Separating...", file=sys.stderr)
+        import multiprocessing
+        num_workers = max(1, multiprocessing.cpu_count() - 1)
+        print(f"[Demucs] Separating using {num_workers} workers...", file=sys.stderr)
+        
         # sources shape: (Sources, Channels, Samples)
-        sources = apply_model(model, wav[None], device="cpu", shifts=1, split=True, overlap=0.25, progress=True)[0]
+        sources = apply_model(model, wav[None], device="cpu", shifts=1, split=True, 
+                             overlap=0.25, progress=True, num_workers=num_workers)[0]
         
         # De-normalize
         sources = sources * ref.std() + ref.mean()
@@ -158,8 +162,27 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
         final_stems = {}
         if os.path.exists(os.path.join(separated_folder, "vocals.wav")):
             final_stems["vocals"] = f"/separated_audio/htdemucs/{demucs_folder_name}/vocals.wav"
-        if os.path.exists(os.path.join(separated_folder, "other.wav")):
-            final_stems["background"] = f"/separated_audio/htdemucs/{demucs_folder_name}/other.wav"
+        
+        # Combine other, bass, and drums into a single "background" stem for the UI
+        try:
+            bg_parts = []
+            for part in ["other.wav", "bass.wav", "drums.wav"]:
+                p_path = os.path.join(separated_folder, part)
+                if os.path.exists(p_path):
+                    psr, pdata = wavfile.read(p_path)
+                    bg_parts.append(pdata)
+            
+            if bg_parts:
+                # Sum them up
+                combined_bg = sum(bg_parts)
+                bg_out = os.path.join(separated_folder, "background_mixed.wav")
+                wavfile.write(bg_out, model.samplerate, combined_bg)
+                final_stems["background"] = f"/separated_audio/htdemucs/{demucs_folder_name}/background_mixed.wav"
+        except Exception as e:
+            log(f"Error mixing background: {e}")
+            # Fallback to just "other" if mixing fails
+            if os.path.exists(os.path.join(separated_folder, "other.wav")):
+                final_stems["background"] = f"/separated_audio/htdemucs/{demucs_folder_name}/other.wav"
 
 
         # 2. Forensic Event Masking (if classification provided)
@@ -174,10 +197,18 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                      log(f"Classification ERROR: {classification_data.get('message', 'No message')}")
 
                 # Load original Audio (already converted/validated)
-                sr, audio_data = wavfile.read(read_path)
-                log(f"Loaded audio. Sample rate: {sr}, Shape: {audio_data.shape}")
+                import librosa
+                y, sr = librosa.load(read_path, sr=None)
+                log(f"Loaded audio with librosa. SR: {sr}, Shape: {y.shape}")
                 
-                # Prepare empty containers (silence)
+                # 1. SPECIALIZED SPECTRAL PRE-PROCESSING
+                # Separate Harmonic (Voice/Music) from Percussive (Gunshots/Footsteps/Impacts)
+                log("Performing Harmonic-Percussive Source Separation (HPSS)...")
+                # Power-based separation is better for forensic gating
+                # Higher margin for more distinct separation
+                harmonic, percussive = librosa.effects.hpss(y, margin=(1.0, 6.0))
+                
+                # Prepare empty containers (silence) for forensic stems
                 stems_to_generate = {
                     "vocals": "Human Voice",
                     "background": "Musical Content",
@@ -190,50 +221,73 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                     "sirens": "Siren / Alarm",
                     "impact": "Impact / Breach"
                 }
-                
-                # Check what we already have from Demucs
-                has_demucs_vocals = "vocals" in final_stems
-                has_demucs_background = "background" in final_stems
-                
-                if len(audio_data.shape) > 1:
-                     generated_audio = { key: np.zeros_like(audio_data) for key in stems_to_generate }
-                else:
-                     generated_audio = { key: np.zeros_like(audio_data) for key in stems_to_generate }
 
-                # Iterate events and fill segments
+                # HIGHER SENSITIVITY: Consider any sound with > 0.02 confidence if it matches forensic type
                 events = classification_data.get("soundEvents", [])
-                log(f"Found {len(events)} sound events.")
+                log(f"Gating {len(events)} detected events...")
                 
-                CLIP_DURATION = 0.975
+                # Initialize forensic stems with zeros (silence)
+                generated_audio = { key: np.zeros_like(y) for key in stems_to_generate }
                 
+                CLIP_DURATION = 0.975 # standard YAMNet window
                 count_generated = 0
+                
                 for event in events:
-                    etype = event.get("type", "")
+                    etype = event.get("type", "").lower()
+                    conf = event.get("confidence", 0)
+                    
+                    if conf < 0.05: continue # Ignore very weak detections
+
                     target_stem = None
                     for stem_key, trigger_word in stems_to_generate.items():
-                        if trigger_word.lower() == etype.lower():
+                        if trigger_word.lower() in etype or etype in trigger_word.lower():
                             target_stem = stem_key
                             break
                     
                     if target_stem:
-                        # Skip forensic generation if Demucs already provided it (higher quality)
-                        if target_stem == "vocals" and has_demucs_vocals:
-                            continue
-                        if target_stem == "background" and has_demucs_background:
-                            continue
+                        # Skip if Demucs handles it better
+                        if target_stem == "vocals" and "vocals" in final_stems: continue
+                        if target_stem == "background" and "background" in final_stems: continue
 
                         start_time = float(event.get("time", 0))
-                        end_time = start_time + CLIP_DURATION
                         start_idx = int(start_time * sr)
-                        end_idx = int(end_time * sr)
+                        end_idx = start_idx + int(CLIP_DURATION * sr)
                         start_idx = max(0, start_idx)
-                        end_idx = min(len(audio_data), end_idx)
+                        end_idx = min(len(y), end_idx)
                         
                         if start_idx < end_idx:
-                            generated_audio[target_stem][start_idx:end_idx] = audio_data[start_idx:end_idx]
+                            # Choose the most likely signal source based on forensic type
+                            is_percussive = any(x in target_stem for x in ["gunshot", "impact", "footsteps"])
+                            is_harmonic = any(x in target_stem for x in ["siren", "scream", "vocals"])
+                            
+                            source = y  # default
+                            if is_percussive: source = percussive
+                            elif is_harmonic: source = harmonic
+                            
+                            segment = source[start_idx:end_idx].copy()
+                            
+                            # APPLY FILTERS
+                            if target_stem == "vehicles":
+                                segment = librosa.lowpass_filter(segment, sr=sr, cutoff=300)
+                            elif target_stem == "sirens":
+                                segment = librosa.bandpass_filter(segment, sr=sr, low=500, high=3000)
+                            
+                            # Aggressive Noise Gate: anything 20dB below peak in segment is zeroed
+                            peak = np.max(np.abs(segment))
+                            if peak > 0:
+                                threshold = peak * 0.15 # Stronger gate
+                                segment[np.abs(segment) < threshold] = 0
+                            
+                            # Smooth fade
+                            fade = int(0.05 * sr)
+                            if len(segment) > fade * 2:
+                                segment[:fade] *= np.linspace(0, 1, fade)
+                                segment[-fade:] *= np.linspace(1, 0, fade)
+
+                            generated_audio[target_stem][start_idx:end_idx] += segment
                             count_generated += 1
 
-                log(f"Processed {count_generated} event segments matches.")
+                log(f"Reconstruction complete ({count_generated} segments).")
 
                 # Save generated stems
                 gen_dir = os.path.join(output_dir, "generated", job_id)
@@ -241,12 +295,14 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                 
                 for stem_key, audio_arr in generated_audio.items():
                     peak = np.max(np.abs(audio_arr))
-                    log(f"Stem {stem_key} peak amplitude: {peak}")
-                    
-                    if peak > 0:
+                    if peak > 0.005: # more strict threshold
+                        # Normalize and save
+                        audio_arr = audio_arr * (0.8 / peak) # normalize to 0.8
                         out_file = os.path.join(gen_dir, f"{stem_key}.wav")
                         wavfile.write(out_file, sr, audio_arr)
                         final_stems[stem_key] = f"/separated_audio/generated/{job_id}/{stem_key}.wav"
+                    elif stem_key not in final_stems:
+                        final_stems[stem_key] = "__EMPTY__"
             
             except Exception as e:
                 log(f"Masking Exception: {str(e)}")

@@ -9,9 +9,13 @@ export const maxDuration = 300;
 async function runPython(scriptName: string, args: string[]): Promise<any> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(process.cwd(), "scripts", scriptName);
-    console.log(`[Forensic] Spawning: python "${scriptPath}" ${args.join(" ")}`);
+    // Use double quotes for paths that might contain spaces
+    const quotedScriptPath = `"${scriptPath}"`;
+    const formattedArgs = args.map(arg => arg.startsWith('"') ? arg : `"${arg}"`);
 
-    const python = spawn("python", [`"${scriptPath}"`, ...args], {
+    console.log(`[Forensic] Spawning: python ${quotedScriptPath} ${formattedArgs.join(" ")}`);
+
+    const python = spawn("python", [quotedScriptPath, ...formattedArgs], {
       shell: true,
       windowsHide: true
     });
@@ -19,38 +23,35 @@ async function runPython(scriptName: string, args: string[]): Promise<any> {
     let stdout = "";
     let stderr = "";
 
-    // Set a timeout to kill the process if it hangs. Demucs can be slow on CPU.
-    // Increased to 10 minutes (600,000 ms) for CPU processing
     const timeout = setTimeout(() => {
       console.error(`[Forensic] Timeout executing ${scriptName}`);
       python.kill();
-      reject(new Error(`Timeout executing ${scriptName}. The operation took too long.`));
-    }, 600000);
+      reject(new Error(`Timeout executing ${scriptName}. The operation took too long (20 min).`));
+    }, 1200000); // 20 Minutes
 
     python.stdout.on("data", (data) => (stdout += data.toString()));
     python.stderr.on("data", (data) => {
       const msg = data.toString();
       stderr += msg;
-      console.error(msg); // Stream to terminal immediately
+      console.error(`[Python-Stderr] ${msg}`);
     });
 
     python.on("close", (code) => {
       clearTimeout(timeout);
+
       if (code !== 0) {
-        console.error(`[Forensic] Process exited with code ${code}`);
-        console.error(`[Forensic] Stderr: ${stderr}`);
+        return reject(new Error(`Python process exited with code ${code}. Error: ${stderr}`));
       }
 
       try {
         const start = stdout.indexOf('{');
         const end = stdout.lastIndexOf('}');
         if (start === -1) {
-          // If no JSON, maybe it crashed. Use stderr if available.
-          return reject(new Error(stderr || "No JSON found in Python output"));
+          return reject(new Error(`No JSON found in Python output. Stderr: ${stderr}`));
         }
         resolve(JSON.parse(stdout.substring(start, end + 1)));
       } catch (e: any) {
-        reject(new Error(`Parse error: ${e.message}. Output: ${stdout.substring(0, 100)}...`));
+        reject(new Error(`Parse error: ${e.message}. Output: ${stdout.substring(0, 500)}...`));
       }
     });
 
@@ -128,66 +129,14 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error("Forensic Engine Error:", error.message);
-
-    // FALLBACK: If the Python engine fails (timeout or missing dependencies), 
-    // return a mocked successful response so the user can verify the UI visuals.
-    console.log("[Forensic] Activating Simulation Mode due to backend failure.");
-
-    try {
-      // Attempt to recover audio data for fallback playback if possible
-      // Note: we can't easily access the request stream again if already consumed, 
-      // but we can try to return a generic success without the audio echo if needed.
-
-      // Create a rich mock classification for the visualization
-      const mockClassification = {
-        status: "simulated",
-        jobID: "simularion_fallback",
-        detectedSounds: 8,
-        soundEvents: Array.from({ length: 15 }, (_, i) => ({
-          time: (i * 2.5).toFixed(2),
-          type: ["Human Voice", "Vehicle Sound", "Atmospheric Wind", "Animal Signal", "Musical Content"][Math.floor(Math.random() * 5)],
-          confidence: 0.95,
-          decibels: -10 - Math.random() * 30,
-          speaker: Math.random() > 0.5 ? "SPEAKER_01" : "SPEAKER_02"
-        }))
-      };
-
-      // Populate ALL stems with the original audio to simulate a "complete" separation result
-      // The user will hear the master mix for each, but the UI cards will be active.
-      const audioUri = audioDataToUse ? `data:audio/wav;base64,${audioDataToUse}` : null;
-      const mockStems = {
-        "vocals": audioUri,
-        "background": audioUri,
-        "vehicles": audioUri,
-        "footsteps": audioUri,
-        "animals": audioUri,
-        "wind": audioUri
-      };
-
-      // Generate Mock Frequency Spectrum
-      const frequencySpectrum = []
-      for (let i = 0; i < 50; i++) {
-        const freq = i * (20000 / 50)
-        const magnitude = Math.max(0.1, Math.sin(i * 0.2) * 0.5 + Math.random() * 0.3)
-        frequencySpectrum.push({
-          frequency: freq,
-          magnitude: magnitude,
-          time: Math.random() * 5
-        })
-      }
-
-      return NextResponse.json({
-        status: "Success",
-        jobID: "simulation_mode",
-        classification: mockClassification,
-        stems: mockStems,
-        frequencySpectrum: frequencySpectrum,
-        debug: ["Backend process failed/timed out.", "Switched to simulation mode for UI verification.", error.message]
-      });
-    } catch (fallbackError) {
-      return NextResponse.json({ error: "Critical Failure: " + error.message }, { status: 500 });
-    }
-
+    return NextResponse.json(
+      {
+        status: "Error",
+        error: error.message,
+        details: "The forensic engine failed to process the audio. Check backend logs."
+      },
+      { status: 500 }
+    );
   } finally {
     // Cleanup the temp file after processing is done
     if (tempFilePath && fs.existsSync(tempFilePath)) {

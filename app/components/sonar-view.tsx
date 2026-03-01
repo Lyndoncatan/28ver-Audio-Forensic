@@ -16,15 +16,18 @@ import {
 import ForensicDashboard from "./forensic-dashboard" // New Component
 
 // --- FORENSIC TRACK COMPONENT ---
-function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTime, stats }: any) {
+function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTime, stats, isSeparating }: any) {
   const containerRef = useRef<HTMLDivElement>(null)
   const waveSurferRef = useRef<WaveSurfer | null>(null)
   const [isReady, setIsReady] = useState(false)
   const [isLocalPlaying, setIsLocalPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
 
+  const isEmpty = url === "__EMPTY__" || (!url && !isSeparating)
+  const displayUrl = url === "__EMPTY__" ? null : url
+
   useEffect(() => {
-    if (!containerRef.current || !url) return
+    if (!containerRef.current || !displayUrl) return
     if (waveSurferRef.current) waveSurferRef.current.destroy();
 
     waveSurferRef.current = WaveSurfer.create({
@@ -35,7 +38,7 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
       barWidth: 2,
       barGap: 3,
       height: 60,
-      url: url,
+      url: displayUrl,
     })
 
     waveSurferRef.current.on("ready", () => setIsReady(true))
@@ -43,7 +46,7 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
     waveSurferRef.current.on("pause", () => setIsLocalPlaying(false))
 
     return () => waveSurferRef.current?.destroy()
-  }, [url, color])
+  }, [displayUrl, color])
 
   useEffect(() => {
     if (!waveSurferRef.current || !isReady) return
@@ -64,23 +67,23 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
   }
 
   return (
-    <Card className={`bg-slate-950/50 border-slate-800 p-6 transition-all hover:border-slate-600 group relative overflow-hidden ${isMuted ? 'opacity-40' : 'opacity-100'}`}>
+    <Card className={`bg-slate-950/50 border-slate-800 p-6 transition-all hover:border-slate-600 group relative overflow-hidden ${isMuted || isEmpty ? 'opacity-40' : 'opacity-100'}`}>
       <div className="absolute top-0 left-0 w-1 h-full" style={{ backgroundColor: color }} />
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
           <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 shadow-xl group-hover:scale-105 transition-transform">
-            <Icon size={20} style={{ color }} />
+            <Icon size={20} style={{ color: isEmpty ? '#475569' : color }} />
           </div>
           <div>
             <h4 className="text-[12px] font-black uppercase tracking-widest text-slate-100 italic leading-none">{label}</h4>
             <div className="flex items-center gap-2 mt-1">
-              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />
-              <span className="text-[9px] text-slate-500 font-mono tracking-tighter uppercase">
-                {url ? "Signal_Isolated" : "Waiting..."}
+              {!isEmpty && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />}
+              <span className={`text-[9px] font-mono tracking-tighter uppercase ${isEmpty ? 'text-slate-600' : 'text-slate-500'}`}>
+                {isSeparating ? "Isolating..." : (isEmpty ? "NOT_DETECTED" : "Signal_Isolated")}
               </span>
             </div>
             {/* NEW: Stats Display */}
-            {stats && (
+            {stats && !isEmpty && (
               <div className="flex gap-2 mt-2">
                 <Badge variant="outline" className="text-[8px] h-4 px-1 text-slate-400 border-slate-800 bg-slate-900/50">
                   {stats.confidence}% CONF
@@ -96,20 +99,25 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={toggleMute} variant="ghost" size="icon" className="h-10 w-10 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800">
+          <Button onClick={toggleMute} disabled={isEmpty} variant="ghost" size="icon" className="h-10 w-10 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800">
             {isMuted ? <VolumeX size={16} className="text-red-500" /> : <Volume2 size={16} className="text-slate-400" />}
           </Button>
-          <Button onClick={toggleLocalPlay} variant="ghost" size="icon" className="h-10 w-10 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800">
+          <Button onClick={toggleLocalPlay} disabled={isEmpty} variant="ghost" size="icon" className="h-10 w-10 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800">
             {isLocalPlaying ? <Pause size={16} className="text-white" /> : <Play size={16} className="text-white ml-0.5" />}
           </Button>
-          {url && (
+          {displayUrl && (
             <Button variant="ghost" size="icon" className="h-10 w-10 rounded-xl bg-slate-900 border border-slate-800" asChild>
-              <a href={url} download><Download size={16} className="text-slate-400" /></a>
+              <a href={displayUrl} download><Download size={16} className="text-slate-400" /></a>
             </Button>
           )}
         </div>
       </div>
       <div ref={containerRef} className="opacity-80 group-hover:opacity-100 transition-opacity cursor-pointer mt-2" />
+      {isEmpty && !isSeparating && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/20 pointer-events-none">
+          <span className="text-[10px] text-slate-700 font-black tracking-widest opacity-30">NO_SIGNAL_MATCH</span>
+        </div>
+      )}
     </Card>
   )
 }
@@ -830,19 +838,19 @@ export default function SonarView({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 pb-20">
-              <ForensicTrack url={audioData?.url} label="Master Mix" color="#ffffff" icon={AudioWaveform} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Master"])} />
-              <ForensicTrack url={currentStems?.vocals} label="Vocals / Dialogue" color="#3b82f6" icon={Mic2} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Voice", "Speech"])} />
-              <ForensicTrack url={currentStems?.background} label="Ambient / Noise" color="#10b981" icon={Waves} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Music", "Background"])} />
-              <ForensicTrack url={currentStems?.vehicles} label="Vehicle / Machinery" color="#ef4444" icon={Car} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Vehicle", "Car", "Engine"])} />
-              <ForensicTrack url={currentStems?.footsteps} label="Footsteps / Impact" color="#8b5cf6" icon={Footprints} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Footstep"])} />
-              <ForensicTrack url={currentStems?.animals} label="Animal Signal" color="#f59e0b" icon={Bird} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Animal", "Bird", "Dog"])} />
-              <ForensicTrack url={currentStems?.wind} label="Atmospheric Wind" color="#06b6d4" icon={Wind} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Wind", "Thunder"])} />
+              <ForensicTrack url={audioData?.url} label="Master Mix" color="#ffffff" icon={AudioWaveform} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Master"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.vocals} label="Vocals / Dialogue" color="#3b82f6" icon={Mic2} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Voice", "Speech"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.background} label="Ambient / Noise" color="#10b981" icon={Waves} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Music", "Background"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.vehicles} label="Vehicle / Machinery" color="#ef4444" icon={Car} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Vehicle", "Car", "Engine"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.footsteps} label="Footsteps / Impact" color="#8b5cf6" icon={Footprints} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Footstep"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.animals} label="Animal Signal" color="#f59e0b" icon={Bird} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Animal", "Bird", "Dog"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.wind} label="Atmospheric Wind" color="#06b6d4" icon={Wind} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Wind", "Thunder"])} isSeparating={isSeparating} />
 
               {/* NEW FORENSIC CATEGORIES */}
-              <ForensicTrack url={currentStems?.gunshots} label="Gunshot / Explosion" color="#dc2626" icon={Bomb} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Gunshot", "Explosion"])} />
-              <ForensicTrack url={currentStems?.screams} label="Scream / Aggression" color="#be123c" icon={Megaphone} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Scream", "Shout"])} />
-              <ForensicTrack url={currentStems?.sirens} label="Siren / Alarm" color="#f97316" icon={AlertTriangle} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Siren", "Alarm"])} />
-              <ForensicTrack url={currentStems?.impact} label="Impact / Breach" color="#7c3aed" icon={Hammer} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Glass", "Hammer", "Slam"])} />
+              <ForensicTrack url={currentStems?.gunshots} label="Gunshot / Explosion" color="#dc2626" icon={Bomb} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Gunshot", "Explosion"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.screams} label="Scream / Aggression" color="#be123c" icon={Megaphone} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Scream", "Shout"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.sirens} label="Siren / Alarm" color="#f97316" icon={AlertTriangle} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Siren", "Alarm"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.impact} label="Impact / Breach" color="#7c3aed" icon={Hammer} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Glass", "Hammer", "Slam"])} isSeparating={isSeparating} />
             </div>
           )}
         </TabsContent>
