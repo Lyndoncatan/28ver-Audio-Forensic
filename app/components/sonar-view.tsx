@@ -23,8 +23,8 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
   const [isLocalPlaying, setIsLocalPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
 
-  const isEmpty = url === "__EMPTY__" || (!url && !isSeparating)
-  const displayUrl = url === "__EMPTY__" ? null : url
+  const isEmpty = url === "__EMPTY__" || (!url && !isSeparating) || (url && url.includes("_silent.wav"))
+  const displayUrl = url === "__EMPTY__" || (url && url.includes("_silent.wav")) ? null : url
 
   useEffect(() => {
     if (!containerRef.current || !displayUrl) return
@@ -79,7 +79,7 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
             <div className="flex items-center gap-2 mt-1">
               {!isEmpty && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />}
               <span className={`text-[9px] font-mono tracking-tighter uppercase ${isEmpty ? 'text-slate-600' : 'text-slate-500'}`}>
-                {isSeparating ? "Isolating..." : (isEmpty ? "None_Identified" : "Signal_Isolated")}
+                {isSeparating ? "Isolating..." : (isEmpty ? "No_Signal_Detected" : "Signal_Isolated")}
               </span>
             </div>
             {/* NEW: Stats Display */}
@@ -115,7 +115,7 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
       <div ref={containerRef} className="opacity-80 group-hover:opacity-100 transition-opacity cursor-pointer mt-2" />
       {isEmpty && !isSeparating && (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-950/20 pointer-events-none">
-          <span className="text-[10px] text-slate-700 font-black tracking-widest opacity-30">NO_SIGNAL_MATCH</span>
+          <span className="text-[10px] text-slate-700 font-black tracking-widest opacity-30">NO_SIGNAL_AT_DISTANCE</span>
         </div>
       )}
     </Card>
@@ -360,80 +360,128 @@ export default function SonarView({
     // Detect Hover
     let foundHover: any = null;
 
-    // Draw Events — bigger dots with glow
-    activeEvents.forEach((ev: any) => {
-      const duration = audioData?.analysisResults?.duration || 1;
-      const normalizedTime = (ev.time || 0) / duration;
-      const a = normalizedTime * Math.PI * 2 - Math.PI / 2;
+    // Sort activeEvents by confidence to prioritize drawing top ones
+    const sortedEvents = [...activeEvents].sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
 
+    // Draw Events — refined look with directional scattering based on distance
+    sortedEvents.forEach((ev: any, index: number) => {
+      // Calculate distance from decibels (inverse relationship: closer = louder)
       const db = Number(ev.decibels || -60);
-      const normalizedDb = Math.max(0, Math.min(1, (db + 90) / 90));
-      const radiusFactor = 1.0 - normalizedDb;
-      const d = (radiusFactor * maxR * 0.9) + (maxR * 0.1);
-
+      const distanceInMeters = Math.abs(db); // Approximate: -10dB = 10m, -60dB = 60m
+      
+      // Normalize distance to radar radius (0-100m range mapped to 0-maxR)
+      const normalizedDistance = Math.min(distanceInMeters / 100, 1.0);
+      const d = normalizedDistance * maxR * 0.9; // Distance from center
+      
+      // Use sound characteristics to determine direction (pseudo-random but consistent)
+      // Combine time, confidence, and sound type to create unique direction for each sound
+      const directionSeed = (ev.time || 0) * 1000 + (ev.confidence || 0) * 100 + (ev.type || "").length;
+      const angle = (directionSeed * 137.5) % 360; // Golden angle for natural distribution
+      const a = (angle * Math.PI / 180) - Math.PI / 2;
+      
       const x = cx + Math.cos(a) * d;
       const y = cy + Math.sin(a) * d;
 
-      const isActive = Math.abs(currentTime - Number(ev.time || 0)) < 0.3;
+      const timeDiff = Math.abs(currentTime - Number(ev.time || 0));
+      const isActive = timeDiff < 0.25; // Narrower window for cleaner look
+
       const mh = mousePos.current;
       const distToMouse = Math.sqrt((mh.x - x) ** 2 + (mh.y - y) ** 2);
       const isHovered = distToMouse < 15;
       if (isHovered) foundHover = ev;
 
-      const baseColor = ev.speaker === "SPEAKER_01" ? "#ef4444" : "#3b82f6";
+      // Color based on distance (closer = brighter/warmer, farther = dimmer/cooler)
+      const distanceColor = distanceInMeters < 20 ? "#ef4444" : // Close: Red
+                           distanceInMeters < 40 ? "#f97316" : // Medium: Orange  
+                           distanceInMeters < 60 ? "#eab308" : // Far: Yellow
+                           "#6b7280"; // Very Far: Gray
+      
+      const baseColor = ev.speaker === "SPEAKER_01" ? "#ef4444" : distanceColor;
       const color = isActive ? "#ffffff" : baseColor;
 
-      // Always draw a subtle glow ring around each event
+      // Subtle glow ring (smaller)
       ctx.beginPath();
-      ctx.arc(x, y, 10, 0, Math.PI * 2);
-      ctx.fillStyle = baseColor + "30";
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = baseColor + "20";
       ctx.fill();
 
-      // Spreading Ripple Effect (when active)
+      // Refined Ripple Effect
       if (isActive) {
-        const pulse = (Date.now() / 1000) % 1;
+        const pulse = (Date.now() / 1500) % 1; // Slower, more elegant
         ctx.beginPath();
         ctx.strokeStyle = baseColor;
-        ctx.globalAlpha = 1 - pulse;
-        ctx.lineWidth = 2;
-        ctx.arc(x, y, 5 + (pulse * 30), 0, Math.PI * 2);
-        ctx.stroke();
-        const pulse2 = ((Date.now() / 1000) + 0.5) % 1;
-        ctx.globalAlpha = 1 - pulse2;
-        ctx.beginPath();
-        ctx.arc(x, y, 5 + (pulse2 * 30), 0, Math.PI * 2);
+        ctx.globalAlpha = (1 - pulse) * 0.5; // Faded
+        ctx.lineWidth = 1;
+        ctx.arc(x, y, 3 + (pulse * 15), 0, Math.PI * 2); // Smaller radius
         ctx.stroke();
         ctx.globalAlpha = 1.0;
       }
 
-      // The Point — bigger
+      // The Point — smaller and sharper
       ctx.beginPath();
-      ctx.arc(x, y, isActive ? 7 : 5, 0, Math.PI * 2);
+      ctx.arc(x, y, isActive ? 4 : 2.5, 0, Math.PI * 2);
       ctx.fillStyle = color;
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = baseColor;
+      if (isActive) {
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = baseColor;
+      }
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      // Labels
-      if (isActive || isHovered) {
+      // Smart Labels: Only show for top 5 active events OR if hovered
+      const showLabel = isHovered || (isActive && index < 5);
+      if (showLabel) {
         if (isActive) {
           ctx.beginPath();
           ctx.strokeStyle = baseColor;
-          ctx.globalAlpha = 0.3;
+          ctx.globalAlpha = 0.2;
           ctx.lineWidth = 1;
           ctx.moveTo(cx, cy);
           ctx.lineTo(x, y);
           ctx.stroke();
           ctx.globalAlpha = 1.0;
         }
+
+        // Background for label to ensure readability
+        const labelText = `${ev.type || "SIGNAL"}`;
+        const subText = `${distanceInMeters.toFixed(0)}m | ${Math.abs(db).toFixed(0)}dB | ${((ev.confidence || 0) * 100).toFixed(0)}%`;
+
+        ctx.font = "bold 9px monospace";
+        const tw1 = ctx.measureText(labelText).width;
+        const tw2 = ctx.measureText(subText).width;
+        const bgW = Math.max(tw1, tw2) + 16;
+
+        ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+        ctx.beginPath();
+        // Drawing a small rounded rect for the label
+        const bx = x + 10;
+        const by = y - 18;
+        const bw = bgW;
+        const bh = 30;
+        const r = 4;
+        ctx.moveTo(bx + r, by);
+        ctx.lineTo(bx + bw - r, by);
+        ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
+        ctx.lineTo(bx + bw, by + bh - r);
+        ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
+        ctx.lineTo(bx + r, by + bh);
+        ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
+        ctx.lineTo(bx, by + r);
+        ctx.quadraticCurveTo(bx, by, bx + r, by);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = baseColor + "60";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 11px monospace";
+        ctx.font = "bold 10px Inter, sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText(`${ev.type || "SIGNAL"}`, x + 14, y);
-        ctx.fillStyle = "rgba(255,255,255,0.7)";
-        ctx.font = "10px monospace";
-        ctx.fillText(`${Math.abs(db).toFixed(0)}dB | ${((ev.confidence || 0) * 100).toFixed(0)}%`, x + 14, y + 12);
+        ctx.fillText(labelText, x + 16, y - 4);
+
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.font = "8px Inter, sans-serif";
+        ctx.fillText(subText, x + 16, y + 8);
       }
     });
 
@@ -556,39 +604,49 @@ export default function SonarView({
     // Sort events
     const renderList: any[] = [];
 
-    activeEvents.forEach((ev: any) => {
+    activeEvents.forEach((ev: any, index: number) => {
       const duration = (audioData?.analysisResults?.duration || 1)
 
-      // Calculate 3D Position
-      const xRaw = (((ev.time || 0) / duration) * 400) - 200;
-
-      // Map dB to Depth
+      // Calculate distance from decibels (inverse relationship: closer = louder)
       const db = Number(ev.decibels || -60);
-      const normalizedDb = Math.max(0, Math.min(1, (db + 90) / 90));
-      const zRaw = ((1 - normalizedDb) * 300) - 150;
+      const distanceInMeters = Math.abs(db); // Approximate: -10dB = 10m, -60dB = 60m
+      
+      // Map distance to 3D space (0-100m range to -200 to +200)
+      const distanceNormalized = Math.min(distanceInMeters / 100, 1.0);
+      const actualDistance = distanceNormalized * 200; // Max 200 units from center
+      
+      // Use sound characteristics to determine direction (pseudo-random but consistent)
+      // Combine time, confidence, and sound type to create unique direction for each sound
+      const directionSeed = (ev.time || 0) * 1000 + (ev.confidence || 0) * 100 + (ev.type || "").length;
+      const angle = (directionSeed * 137.5) % 360; // Golden angle for natural distribution
+      const angleRad = (angle * Math.PI / 180);
+      
+      const xRaw = Math.cos(angleRad) * actualDistance;
+      const zRaw = Math.sin(angleRad) * actualDistance;
 
       // Apply Rotation
       const x = xRaw * Math.cos(ry) - zRaw * Math.sin(ry);
       const z = xRaw * Math.sin(ry) + zRaw * Math.cos(ry);
       const yBase = 100; // Floor
 
-      // Height based on confidence
+      // Height based on confidence (louder/closer sounds appear taller)
       const confidence = ev.confidence || 0.5;
-      const h = Math.max(20, confidence * 150);
+      const heightFactor = 1.0 - distanceNormalized; // Closer sounds are taller
+      const h = Math.max(20, confidence * heightFactor * 150);
 
       // Project Base and Top
       const projBase = project(x, yBase, z);
       const projTop = project(x, yBase - h, z);
 
       if (projBase.s > 0) {
-        renderList.push({ ev, projBase, projTop, zIndex: z, h, isActive: Math.abs(currentTime - (ev.time || 0)) < 0.3 });
+        renderList.push({ ev, projBase, projTop, zIndex: z, h, distance: distanceInMeters, isActive: Math.abs(currentTime - (ev.time || 0)) < 0.25 });
       }
     });
 
     renderList.sort((a, b) => b.zIndex - a.zIndex);
 
     renderList.forEach((item) => {
-      const { ev, projBase, projTop, isActive, h, zIndex } = item;
+      const { ev, projBase, projTop, isActive, h, zIndex, distance } = item;
 
       // Check Hover
       const dist = Math.sqrt((mx - projTop.x) ** 2 + (my - projTop.y) ** 2);
@@ -599,13 +657,18 @@ export default function SonarView({
       }
       const isSelected = hoveredVoxel && hoveredVoxel === ev;
 
-      const baseColor = ev.speaker === 'SPEAKER_01' ? '#ef4444' : '#3b82f6'; // Red vs Blue
+      // Color based on distance (closer = brighter/warmer, farther = dimmer/cooler)
+      const distanceColor = distance < 20 ? "#ef4444" : // Close: Red
+                           distance < 40 ? "#f97316" : // Medium: Orange  
+                           distance < 60 ? "#eab308" : // Far: Yellow
+                           "#6b7280"; // Very Far: Gray
+      
+      const baseColor = ev.speaker === 'SPEAKER_01' ? '#ef4444' : distanceColor;
 
-      // Calculate Opacity based on Z-Distance (Fog)
-      // zIndex ranges roughly -200 to 200. Far away (200) should be faded.
-      const fogFactor = Math.max(0.2, 1 - (zIndex + 200) / 600);
+      // Calculate Opacity based on Z-Distance (Fog) - More aggressive
+      const fogFactor = Math.max(0.1, 1 - (zIndex + 200) / 450);
 
-      const alpha = isActive || isSelected ? 1 : fogFactor;
+      const alpha = isActive || isSelected ? 1 : fogFactor * 0.4;
       const color = isActive || isSelected ? "#ffffff" : baseColor;
 
       // 1. Draw "Volumetric" Pillar (Gradient Line)
@@ -614,13 +677,15 @@ export default function SonarView({
       grad.addColorStop(0.2, `${baseColor}40`);
       grad.addColorStop(1, `${baseColor}FF`); // Opaque at top
 
-      ctx.lineWidth = projBase.s * (isActive ? 12 : 6);
+      ctx.lineWidth = projBase.s * (isActive ? 6 : 2.5); // Slimmer pillars
       ctx.strokeStyle = grad;
+      ctx.globalAlpha = alpha;
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(projBase.x, projBase.y);
       ctx.lineTo(projTop.x, projTop.y);
       ctx.stroke();
+      ctx.globalAlpha = 1.0;
       ctx.lineCap = "butt"; // Reset
 
       // 2. Connector Line (Thin, distinct)
@@ -638,8 +703,8 @@ export default function SonarView({
       ctx.ellipse(projBase.x, projBase.y, projBase.s * 10, projBase.s * 4, 0, 0, Math.PI * 2);
       ctx.stroke();
 
-      // 4. Top Orb (Glowing)
-      const orbSize = projTop.s * (isActive ? 8 : 4);
+      // 4. Top Orb (Glowing) - Smaller
+      const orbSize = projTop.s * (isActive ? 5 : 2);
 
       // Glow
       if (isActive || isSelected) {
@@ -669,7 +734,7 @@ export default function SonarView({
         ctx.fillText(label, projTop.x, projTop.y - 15);
         ctx.font = "9px monospace";
         ctx.fillStyle = "#cbd5e1";
-        ctx.fillText(`${Math.abs(Number(ev.decibels)).toFixed(1)}dB`, projTop.x, projTop.y - 5);
+        ctx.fillText(`${distance.toFixed(0)}m | ${Math.abs(Number(ev.decibels)).toFixed(1)}dB`, projTop.x, projTop.y - 5);
         ctx.shadowBlur = 0;
 
         // Draw leader line to actual 3D point
@@ -789,32 +854,31 @@ export default function SonarView({
                     : 'border-transparent opacity-70 hover:opacity-100'
                     }`}
                 >
-                  <div className="flex flex-col">
+                  <div className="flex flex-col flex-1 mx-4">
                     <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-sm ${isActive ? "bg-current animate-ping" : "bg-slate-600"}`} />
-                      <span className={`text-[10px] tabular-nums font-mono ${isActive ? "text-white font-bold" : "text-slate-500"}`}>{Number(ev?.time || 0).toFixed(3)}s</span>
+                      <div className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-current animate-pulse" : "bg-slate-700"}`} />
+                      <span className={`text-[10px] tabular-nums font-mono ${isActive ? "text-white" : "text-slate-500"}`}>
+                        {Number(ev?.time || 0).toFixed(3)}s
+                      </span>
                     </div>
-                    <span className={`text-[12px] font-black uppercase tracking-widest mt-1 ${ev.speaker === 'SPEAKER_01' ? 'text-red-400' : 'text-blue-400'}`}>
+                    <span className={`text-[13px] font-black uppercase tracking-wider mt-0.5 ${ev.speaker === 'SPEAKER_01' ? 'text-red-400' : 'text-blue-400'}`}>
                       {(ev.type || "SIGNAL").toUpperCase()}
                     </span>
-                    <div className="flex gap-2 mt-1">
-                      <Badge variant="outline" className="text-[8px] h-4 px-1 text-slate-500 border-slate-700 bg-slate-900">
-                        CONF: {confidence}%
-                      </Badge>
-                      <Badge variant="outline" className="text-[8px] h-4 px-1 text-slate-500 border-slate-700 bg-slate-900">
-                        DIST: {distance}m
-                      </Badge>
-                    </div>
                   </div>
 
-                  {/* Digital Decoration */}
-                  <div className="flex items-center gap-4">
-                    <span className="text-[9px] font-mono text-slate-600 hidden xl:block">
-                      <div className="flex flex-col items-end">
-                        <span>PWR: {db}dB</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex gap-1">
+                        <Badge variant="outline" className={`text-[8px] h-4 px-1 ${isActive ? 'border-blue-500/50 text-blue-300' : 'border-slate-800 text-slate-500'} bg-slate-950`}>
+                          {confidence}%
+                        </Badge>
+                        <Badge variant="outline" className={`text-[8px] h-4 px-1 ${isActive ? 'border-indigo-500/50 text-indigo-300' : 'border-slate-800 text-slate-500'} bg-slate-950`}>
+                          {db}dB
+                        </Badge>
                       </div>
-                    </span>
-                    <ChevronRight className={`w-4 h-4 transition-transform ${isActive ? 'translate-x-1 text-white' : 'opacity-20'}`} />
+                      <span className="text-[7px] uppercase tracking-tighter text-slate-600 font-bold">Forensic_Confidence</span>
+                    </div>
+                    <ChevronRight className={`w-4 h-4 transition-transform ${isActive ? 'translate-x-1 text-white' : 'opacity-10'}`} />
                   </div>
                 </div>
               );
@@ -854,11 +918,29 @@ export default function SonarView({
               <ForensicTrack url={currentStems?.animals} label="Animal Signal" color="#f59e0b" icon={Bird} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Animal", "Bird", "Dog"])} isSeparating={isSeparating} />
               <ForensicTrack url={currentStems?.wind} label="Atmospheric Wind" color="#06b6d4" icon={Wind} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Wind", "Thunder"])} isSeparating={isSeparating} />
 
-              {/* NEW FORENSIC CATEGORIES */}
+              {/* NEW FORENSIC CATEGORIES WITH DISTANCE-BASED STEMS */}
               <ForensicTrack url={currentStems?.gunshots} label="Gunshot / Explosion" color="#dc2626" icon={Bomb} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Gunshot", "Explosion"])} isSeparating={isSeparating} />
               <ForensicTrack url={currentStems?.screams} label="Scream / Aggression" color="#be123c" icon={Megaphone} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Scream", "Shout"])} isSeparating={isSeparating} />
               <ForensicTrack url={currentStems?.sirens} label="Siren / Alarm" color="#f97316" icon={AlertTriangle} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Siren", "Alarm"])} isSeparating={isSeparating} />
               <ForensicTrack url={currentStems?.impact} label="Impact / Breach" color="#7c3aed" icon={Hammer} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Glass", "Hammer", "Slam"])} isSeparating={isSeparating} />
+              
+              {/* DISTANCE-BASED STEMS FOR VEHICLES */}
+              <ForensicTrack url={currentStems?.vehicles_very_close} label="Vehicle (0-20m)" color="#ef4444" icon={Car} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Vehicle", "Car", "Engine"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.vehicles_close} label="Vehicle (20-40m)" color="#f87171" icon={Car} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Vehicle", "Car", "Engine"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.vehicles_medium} label="Vehicle (40-60m)" color="#fca5a5" icon={Car} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Vehicle", "Car", "Engine"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.vehicles_far} label="Vehicle (60m+)" color="#fecaca" icon={Car} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Vehicle", "Car", "Engine"])} isSeparating={isSeparating} />
+              
+              {/* DISTANCE-BASED STEMS FOR HUMAN VOICE */}
+              <ForensicTrack url={currentStems?.human_voice_very_close} label="Voice (0-20m)" color="#3b82f6" icon={Mic2} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Voice", "Speech"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.human_voice_close} label="Voice (20-40m)" color="#60a5fa" icon={Mic2} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Voice", "Speech"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.human_voice_medium} label="Voice (40-60m)" color="#93c5fd" icon={Mic2} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Voice", "Speech"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.human_voice_far} label="Voice (60m+)" color="#dbeafe" icon={Mic2} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Voice", "Speech"])} isSeparating={isSeparating} />
+              
+              {/* DISTANCE-BASED STEMS FOR FOOTSTEPS */}
+              <ForensicTrack url={currentStems?.footsteps_very_close} label="Footsteps (0-20m)" color="#8b5cf6" icon={Footprints} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Footstep"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.footsteps_close} label="Footsteps (20-40m)" color="#a78bfa" icon={Footprints} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Footstep"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.footsteps_medium} label="Footsteps (40-60m)" color="#c4b5fd" icon={Footprints} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Footstep"])} isSeparating={isSeparating} />
+              <ForensicTrack url={currentStems?.footsteps_far} label="Footsteps (60m+)" color="#ede9fe" icon={Footprints} masterPlaying={isPlaying} masterTime={currentTime} stats={getStats(["Footstep"])} isSeparating={isSeparating} />
             </div>
           )}
         </TabsContent>

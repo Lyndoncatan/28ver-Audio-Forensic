@@ -160,7 +160,7 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                 y_full, sr_full = librosa.load(read_path, sr=None)
                 log(f"Loaded audio with librosa. SR: {sr_full}, Shape: {y_full.shape}")
                 
-                # Separation Logic based on detected forensic events
+                # Enhanced Forensic Separation with Distance-Based Grouping
                 forensic_targets = {
                     "gunshots": ["Gunshot / Explosion"],
                     "screams": ["Scream / Aggression"],
@@ -168,30 +168,93 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                     "impact": ["Impact / Breach"],
                     "footsteps": ["Footsteps"],
                     "animals": ["Animal Signal"],
-                    "wind": ["Atmospheric Wind"]
+                    "wind": ["Atmospheric Wind"],
+                    "vehicles": ["Vehicle Sound"],
+                    "human_voice": ["Human Voice"],
+                    "music": ["Musical Content"]
                 }
                 
                 all_events = cls_data.get("allDetections", [])
-                log(f"Gating {len(all_events)} detected forensic events...")
+                log(f"Processing {len(all_events)} detected forensic events with distance-based separation...")
+                
+                # Group events by distance ranges for better separation
+                def get_distance_range(decibels):
+                    db = float(decibels)
+                    if db > -20: return "very_close"  # 0-20m
+                    elif db > -40: return "close"      # 20-40m  
+                    elif db > -60: return "medium"     # 40-60m
+                    else: return "far"                  # 60m+
                 
                 for key, types in forensic_targets.items():
-                    out_y = np.zeros_like(y_full)
                     matches = [e for e in all_events if e["type"] in types]
                     
                     if matches:
-                        for m in matches:
-                            start_s = m["time"]
-                            end_s = start_s + 0.5 # YAMNet window
+                        log(f"Found {len(matches)} events for {key}")
+                        
+                        # Create distance-based stems
+                        distance_groups = {}
+                        for match in matches:
+                            dist_range = get_distance_range(match.get("decibels", -60))
+                            if dist_range not in distance_groups:
+                                distance_groups[dist_range] = []
+                            distance_groups[dist_range].append(match)
+                        
+                        # Generate separate audio for each distance range
+                        for dist_range, events in distance_groups.items():
+                            out_y = np.zeros_like(y_full)
+                            
+                            for event in events:
+                                start_s = event["time"]
+                                # Extend window based on distance (farther sounds have longer reverb/tail)
+                                window_size = 0.5 if dist_range in ["very_close", "close"] else 1.0
+                                end_s = start_s + window_size
+                                
+                                start_idx = int(start_s * sr_full)
+                                end_idx = int(end_s * sr_full)
+                                
+                                if end_idx < len(y_full):
+                                    # Apply fade in/out for smoother transitions
+                                    fade_samples = int(0.05 * sr_full)  # 50ms fade
+                                    segment = y_full[start_idx:end_idx]
+                                    
+                                    # Apply fade in
+                                    if len(segment) > fade_samples:
+                                        fade_in = np.linspace(0, 1, fade_samples)
+                                        segment[:fade_samples] *= fade_in
+                                        
+                                        # Apply fade out
+                                        fade_out = np.linspace(1, 0, fade_samples)
+                                        segment[-fade_samples:] *= fade_out
+                                    
+                                    out_y[start_idx:end_idx] = segment
+                            
+                            # Save distance-grouped stem
+                            f_path = os.path.join(gen_dir, f"{key}_{dist_range}.wav")
+                            wavfile.write(f_path, sr_full, (out_y * 32767).astype(np.int16))
+                            final_stems[f"{key}_{dist_range}"] = f"/separated_audio/generated/{job_id_clean}/{key}_{dist_range}.wav"
+                            log(f"Created {key}_{dist_range} with {len(events)} events")
+                        
+                        # Also create a combined stem for this category
+                        combined_out_y = np.zeros_like(y_full)
+                        for match in matches:
+                            start_s = match["time"]
+                            end_s = start_s + 0.8  # Slightly longer window for combined
                             start_idx = int(start_s * sr_full)
                             end_idx = int(end_s * sr_full)
                             if end_idx < len(y_full):
-                                out_y[start_idx:end_idx] = y_full[start_idx:end_idx]
+                                combined_out_y[start_idx:end_idx] = y_full[start_idx:end_idx]
                         
-                        f_path = os.path.join(gen_dir, f"{key}.wav")
-                        wavfile.write(f_path, sr_full, (out_y * 32767).astype(np.int16))
+                        combined_path = os.path.join(gen_dir, f"{key}.wav")
+                        wavfile.write(combined_path, sr_full, (combined_out_y * 32767).astype(np.int16))
                         final_stems[key] = f"/separated_audio/generated/{job_id_clean}/{key}.wav"
+                        log(f"Created combined {key} stem")
+                        
                     else:
-                        final_stems[key] = "__EMPTY__"
+                        # Don't mark as empty, create a silent stem instead
+                        silent_path = os.path.join(gen_dir, f"{key}_silent.wav")
+                        wavfile.write(silent_path, sr_full, np.zeros(len(y_full), dtype=np.int16))
+                        final_stems[key] = f"/separated_audio/generated/{job_id_clean}/{key}_silent.wav"
+                        log(f"Created silent stem for {key}")
                 
                 log("Reconstruction complete.")
             except Exception as e:

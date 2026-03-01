@@ -110,26 +110,23 @@ def convert_and_normalize(input_path):
     """
     temp_wav = tempfile.mktemp(suffix=".wav")
     try:
-        # Increase gain/normalize to -1dB peak during conversion
+        # Simple conversion without loudnorm filter (which can cause issues)
         subprocess.run([
             'ffmpeg', '-y', '-i', input_path,
-            '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',  # Loudness normalization
             '-ar', '16000', '-ac', '1',
             '-c:a', 'pcm_s16le', temp_wav
-        ], check=True, capture_output=True)
+        ], check=True, capture_output=True, timeout=60)
         return temp_wav
+    except subprocess.TimeoutExpired:
+        print(f"Error: FFmpeg conversion timed out for {input_path}", file=sys.stderr)
+        return None
+    except subprocess.CalledProcessError as e:
+        print(f"Error converting audio with ffmpeg: {e}", file=sys.stderr)
+        print(f"FFmpeg stderr: {e.stderr.decode() if e.stderr else 'None'}", file=sys.stderr)
+        return None
     except Exception as e:
-        print(f"Error normalizing audio with ffmpeg: {e}", file=sys.stderr)
-        # Fallback to simple conversion
-        try:
-            subprocess.run([
-                'ffmpeg', '-y', '-i', input_path,
-                '-ar', '16000', '-ac', '1',
-                '-c:a', 'pcm_s16le', temp_wav
-            ], check=True, capture_output=True)
-            return temp_wav
-        except:
-            return None
+        print(f"Unexpected error in audio conversion: {e}", file=sys.stderr)
+        return None
 
 def classify_audio(audio_path, job_id):
     temp_wav = None
