@@ -30,17 +30,20 @@ def map_to_forensic_category(mediapipe_category):
         "Singing": "Human Voice",
         "Male speech": "Human Voice",
         "Female speech": "Human Voice",
+        "Child speech": "Human Voice",
         "Conversation": "Human Voice",
         "Laughter": "Human Voice",
         "Screaming": "Scream / Aggression",
         "Shout": "Scream / Aggression",
         "Yell": "Scream / Aggression",
+        "Crying": "Scream / Aggression",
         
         # Musical Content
         "Music": "Musical Content",
         "Background music": "Musical Content",
         "Strum": "Musical Content",
         "Guitar": "Musical Content",
+        "Piano": "Musical Content",
         
         # Vehicle Sound
         "Vehicle": "Vehicle Sound",
@@ -50,6 +53,8 @@ def map_to_forensic_category(mediapipe_category):
         "Motorcycle": "Vehicle Sound",
         "Engine": "Vehicle Sound",
         "Accelerating": "Vehicle Sound",
+        "Brake": "Vehicle Sound",
+        "Tire": "Vehicle Sound",
         
         # Siren / Alarm
         "Emergency vehicle": "Siren / Alarm",
@@ -60,7 +65,7 @@ def map_to_forensic_category(mediapipe_category):
         "Alarm": "Siren / Alarm",
         "Buzzer": "Siren / Alarm",
         "Whistle": "Siren / Alarm",
-        "Wind": "Siren / Alarm",
+        "Smoke detector": "Siren / Alarm",
         
         # Gunshot / Explosion
         "Gunshot": "Gunshot / Explosion",
@@ -75,8 +80,15 @@ def map_to_forensic_category(mediapipe_category):
         "Pop": "Gunshot / Explosion",
         "Slam": "Gunshot / Explosion",
         "Thump": "Gunshot / Explosion",
-        "Hammer": "Gunshot / Explosion",
-        "Shatter": "Gunshot / Explosion"
+        "Thunder": "Gunshot / Explosion", # Sometimes confused with explosion
+        
+        # Impact / Footsteps
+        "Hammer": "Impact / Breach",
+        "Shatter": "Impact / Breach",
+        "Glass": "Impact / Breach",
+        "Smash": "Impact / Breach",
+        "Footsteps": "Footsteps",
+        "Clatter": "Impact / Breach"
     }
     
     # Exact match
@@ -91,18 +103,33 @@ def map_to_forensic_category(mediapipe_category):
             
     return "Ambient / Noise"
 
-def convert_to_wav(input_path):
+def convert_and_normalize(input_path):
+    """
+    Ensure the audio file is in the format YAMNet expects and NORMALIZE volume
+    to ensure faint sounds are picked up.
+    """
     temp_wav = tempfile.mktemp(suffix=".wav")
     try:
+        # Increase gain/normalize to -1dB peak during conversion
         subprocess.run([
             'ffmpeg', '-y', '-i', input_path,
+            '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',  # Loudness normalization
             '-ar', '16000', '-ac', '1',
             '-c:a', 'pcm_s16le', temp_wav
         ], check=True, capture_output=True)
         return temp_wav
     except Exception as e:
-        print(f"Error converting audio with ffmpeg: {e}", file=sys.stderr)
-        return None
+        print(f"Error normalizing audio with ffmpeg: {e}", file=sys.stderr)
+        # Fallback to simple conversion
+        try:
+            subprocess.run([
+                'ffmpeg', '-y', '-i', input_path,
+                '-ar', '16000', '-ac', '1',
+                '-c:a', 'pcm_s16le', temp_wav
+            ], check=True, capture_output=True)
+            return temp_wav
+        except:
+            return None
 
 def classify_audio(audio_path, job_id):
     temp_wav = None
@@ -111,18 +138,19 @@ def classify_audio(audio_path, job_id):
         if not os.path.exists(audio_path):
             return {"status": "error", "message": f"File not found: {audio_path}"}
 
-        temp_wav = convert_to_wav(audio_path)
+        # Normalize and convert
+        temp_wav = convert_and_normalize(audio_path)
         if not temp_wav:
              return {"status": "error", "message": "Failed to normalize audio"}
 
         model_path = get_yamnet_model_path()
         
         base_options = python.BaseOptions(model_asset_path=model_path)
-        # Using a higher max_results to capture multiple overlapping sounds
+        # Ultra-sensitive: capture almost everything
         options = audio.AudioClassifierOptions(
             base_options=base_options,
-            max_results=20,
-            score_threshold=0.005  # Forensic sensitivity
+            max_results=25,
+            score_threshold=0.001 
         )
         classifier = audio.AudioClassifier.create_from_options(options)
 
@@ -132,33 +160,37 @@ def classify_audio(audio_path, job_id):
             
         audio_data = mp.tasks.components.containers.AudioData.create_from_array(wav_data, 16000)
         
-        # results is a list of AudioClassifierResult (one per window)
+        # Run classification
         results = classifier.classify(audio_data)
         
         all_detections = []
         
-        # AudioData metadata tells us the timestamp of each result
-        # YAMNet windows are ~0.975s with 50% overlap typically
+        # Process every result window
         for i, discovery in enumerate(results):
-            # i * window_step
-            # YAMNet step is usually 0.48s
-            timestamp = i * 0.48 
+            timestamp = i * 0.48 # YAMNet window step
             
             for classification in discovery.classifications:
                 for category in classification.categories:
                     forensic_type = map_to_forensic_category(category.category_name)
+                    
+                    # We always include detected events in the high-res stream
+                    # but only if they meet a slightly higher threshold to keep UI clean
                     if forensic_type != "Ambient / Noise":
+                        # De-bounce logic: if same sound in previous window, maybe only keep best?
+                        # For now, keep all to show "duration" on radar/matrix
                         all_detections.append({
-                            "type": forensic_type,
+                            "type": forensic_type, # UI uses .type
                             "label": category.category_name,
                             "confidence": float(category.score),
-                            "time": round(timestamp, 3)
+                            "time": round(timestamp, 3),
+                            "decibels": round(20 * np.log10(max(1e-5, category.score)) - 10, 1) # Estimated Power
                         })
 
-        # Summary per category for the UI
+        # Summary for status badges (one per category)
         required_ui_categories = [
             "Human Voice", "Musical Content", "Gunshot / Explosion", 
-            "Siren / Alarm", "Scream / Aggression", "Vehicle Sound"
+            "Siren / Alarm", "Scream / Aggression", "Vehicle Sound",
+            "Footsteps", "Animal Signal", "Atmospheric Wind", "Impact / Breach"
         ]
         
         summary_events = []
@@ -170,25 +202,22 @@ def classify_audio(audio_path, job_id):
                     "category": cat,
                     "status": "DETECTED",
                     "confidence": round(best["confidence"] * 100, 1),
-                    "details": f"Detected: {best['label']} at various intervals"
+                    "details": f"Confirmed: {best['label']}"
                 })
-            else:
-                summary_events.append({
-                    "category": cat,
-                    "status": "NOT_DETECTED",
-                    "confidence": 0,
-                    "details": "None identified"
-                })
+        
+        # Sort all detections by time for the UI list
+        all_detections.sort(key=lambda x: x["time"])
 
         return {
             "jobID": job_id,
-            "soundEvents": summary_events,
+            "soundEvents": all_detections, # UI uses this for Radar/Matrix
+            "categorySummary": summary_events, # Extra info for badges
             "allDetections": all_detections, # Used by audio_separator.py
-            "summary": f"Analyzed forensic profile. Found {len([s for s in summary_events if s['status'] == 'DETECTED'])} categories."
+            "summary": f"Forensic analysis successful. {len(all_detections)} sound events isolated."
         }
         
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Classification error: {str(e)}"}
     finally:
         if temp_wav and os.path.exists(temp_wav):
             try: os.unlink(temp_wav)

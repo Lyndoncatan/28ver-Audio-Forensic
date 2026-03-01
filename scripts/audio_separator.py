@@ -202,8 +202,9 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                 log(f"Loaded audio with librosa. SR: {sr}, Shape: {y.shape}")
                 
                 # 1. SPECIALIZED SPECTRAL PRE-PROCESSING
-                # Separate Harmonic (Voice/Music) from Percussive (Gunshots/Footsteps/Impacts)
-                harmonic, percussive = librosa.effects.hpss(y, margin=(1.2, 2.5))
+                # Stronger percussive margin for gunshots/impacts
+                log("Separating Harmonic/Percussive components...")
+                harmonic, percussive = librosa.effects.hpss(y, margin=(1.2, 4.5))
                 
                 # Prepare empty containers (silence) for forensic stems
                 stems_to_generate = {
@@ -219,7 +220,8 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                     "impact": "Impact / Breach"
                 }
 
-                # LOWER SENSITIVITY: Consider any sound with > 0.005 confidence
+                # LOWER SENSITIVITY: Consider any sound with > 0.01 confidence
+                # Using allDetections for high-resolution gating
                 events = classification_data.get("allDetections", [])
                 log(f"Gating {len(events)} detected forensic events...")
                 
@@ -233,11 +235,10 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                     etype = event.get("type", "").lower()
                     conf = event.get("confidence", 0)
                     
-                    if conf < 0.05: continue # Ignore very weak detections
+                    if conf < 0.01: continue # Higher sensitivity
 
                     target_stem = None
                     for stem_key, trigger_word in stems_to_generate.items():
-                        # Match both the 'type' (Forensic Category) and the 'label' (Specific sound)
                         if trigger_word.lower() in etype or etype in trigger_word.lower():
                             target_stem = stem_key
                             break
@@ -254,31 +255,28 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                         end_idx = min(len(y), end_idx)
                         
                         if start_idx < end_idx:
-                            # Choose the most likely signal source based on forensic type
+                            # Selection logic
                             is_percussive = any(x in target_stem for x in ["gunshot", "impact", "footsteps"])
                             is_harmonic = any(x in target_stem for x in ["siren", "scream", "vocals"])
                             
-                            source = y  # default
+                            source = y.copy()
                             if is_percussive: source = percussive
                             elif is_harmonic: source = harmonic
                             
                             segment = source[start_idx:end_idx].copy()
                             
-                            # APPLY FILTERS
-                            if target_stem == "vehicles":
-                                segment = librosa.lowpass_filter(segment, sr=sr, cutoff=300)
-                            elif target_stem == "sirens":
-                                segment = librosa.bandpass_filter(segment, sr=sr, low=500, high=3000)
+                            # Simple Noise Gate to remove low-level hiss
+                            seg_peak = np.max(np.abs(segment))
+                            if seg_peak > 0:
+                                segment[np.abs(segment) < (seg_peak * 0.1)] = 0
                             
-                            # Aggressive Noise Gate: anything 20dB below peak in segment is zeroed
-                            peak = np.max(np.abs(segment))
-                            if peak > 0:
-                                threshold = peak * 0.15 # Stronger gate
-                                segment[np.abs(segment) < threshold] = 0
-                            
-                            # Boost the isolated signal (X2) to make it stand out
-                            segment = segment * 2.0
-                            
+                            # Apply smooth half-sine window for overlap-add
+                            win_len = len(segment)
+                            if win_len > 0:
+                                window = np.sin(np.pi * np.arange(win_len) / win_len)
+                                segment = segment * window
+                                
+                            # Add to accumulation buffer
                             generated_audio[target_stem][start_idx:end_idx] += segment
                             count_generated += 1
 
