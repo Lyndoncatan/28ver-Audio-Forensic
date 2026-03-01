@@ -27,16 +27,38 @@ async function runPython(scriptName: string, args: string[]): Promise<any> {
             reject(new Error(`Timeout executing ${scriptName}. Engine took too long.`));
         }, 1200000); // 20 Minutes
 
-        python.stdout.on("data", (data) => (stdout += data.toString()));
-        python.stderr.on("data", (data) => (stderr += data.toString()));
+        python.stdout.on("data", (data) => {
+            const msg = data.toString();
+            stdout += msg;
+            // Only log if NOT part of the JSON payload
+            if (!msg.includes("[JSON_START]")) {
+                process.stdout.write(msg);
+            }
+        });
+        python.stderr.on("data", (data) => {
+            const msg = data.toString();
+            stderr += msg;
+            process.stderr.write(msg);
+        });
 
         python.on("close", (code) => {
             clearTimeout(timeout);
             if (code !== 0) return reject(new Error(`Exit ${code}: ${stderr}`));
             try {
-                const start = stdout.indexOf('{');
-                const end = stdout.lastIndexOf('}');
-                resolve(JSON.parse(stdout.substring(start, end + 1)));
+                const startMarker = "[JSON_START]";
+                const endMarker = "[JSON_END]";
+                const startIndex = stdout.indexOf(startMarker);
+                const endIndex = stdout.lastIndexOf(endMarker);
+
+                if (startIndex !== -1 && endIndex !== -1) {
+                    const jsonStr = stdout.substring(startIndex + startMarker.length, endIndex);
+                    resolve(JSON.parse(jsonStr));
+                } else {
+                    // Fallback
+                    const start = stdout.indexOf('{');
+                    const end = stdout.lastIndexOf('}');
+                    resolve(JSON.parse(stdout.substring(start, end + 1)));
+                }
             } catch (e: any) {
                 reject(new Error(`Parse error: ${e.message}`));
             }

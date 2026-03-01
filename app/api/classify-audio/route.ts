@@ -29,11 +29,19 @@ async function runPython(scriptName: string, args: string[]): Promise<any> {
       reject(new Error(`Timeout executing ${scriptName}. The operation took too long (20 min).`));
     }, 1200000); // 20 Minutes
 
-    python.stdout.on("data", (data) => (stdout += data.toString()));
+    python.stdout.on("data", (data) => {
+      const msg = data.toString();
+      stdout += msg;
+      // Only log if NOT part of the JSON payload
+      if (!msg.includes("[JSON_START]")) {
+        process.stdout.write(msg); // Write raw for perfect formatting (progress bars)
+      }
+    });
+
     python.stderr.on("data", (data) => {
       const msg = data.toString();
       stderr += msg;
-      console.error(`[Python-Stderr] ${msg}`);
+      process.stderr.write(msg); // Write raw for progress bars
     });
 
     python.on("close", (code) => {
@@ -44,12 +52,23 @@ async function runPython(scriptName: string, args: string[]): Promise<any> {
       }
 
       try {
-        const start = stdout.indexOf('{');
-        const end = stdout.lastIndexOf('}');
-        if (start === -1) {
-          return reject(new Error(`No JSON found in Python output. Stderr: ${stderr}`));
+        const startMarker = "[JSON_START]";
+        const endMarker = "[JSON_END]";
+        const startIndex = stdout.indexOf(startMarker);
+        const endIndex = stdout.lastIndexOf(endMarker);
+
+        if (startIndex !== -1 && endIndex !== -1) {
+          const jsonStr = stdout.substring(startIndex + startMarker.length, endIndex);
+          resolve(JSON.parse(jsonStr));
+        } else {
+          // Fallback
+          const start = stdout.indexOf('{');
+          const end = stdout.lastIndexOf('}');
+          if (start === -1) {
+            return reject(new Error(`No JSON found in Python output. Stderr: ${stderr}`));
+          }
+          resolve(JSON.parse(stdout.substring(start, end + 1)));
         }
-        resolve(JSON.parse(stdout.substring(start, end + 1)));
       } catch (e: any) {
         reject(new Error(`Parse error: ${e.message}. Output: ${stdout.substring(0, 500)}...`));
       }

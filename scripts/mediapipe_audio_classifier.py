@@ -138,11 +138,15 @@ def classify_audio(audio_path, job_id):
         if not os.path.exists(audio_path):
             return {"status": "error", "message": f"File not found: {audio_path}"}
 
+        print(f"--- High-Sensitivity Forensic Classifier Starting (Job: {job_id}) ---")
+        print(f"Input: {audio_path}")
+        
         # Normalize and convert
         temp_wav = convert_and_normalize(audio_path)
         if not temp_wav:
              return {"status": "error", "message": "Failed to normalize audio"}
 
+        print("Model: Loading YAMNet TFLite...")
         model_path = get_yamnet_model_path()
         
         base_options = python.BaseOptions(model_asset_path=model_path)
@@ -154,6 +158,7 @@ def classify_audio(audio_path, job_id):
         )
         classifier = audio.AudioClassifier.create_from_options(options)
 
+        print("Processing: Reading audio data...")
         sample_rate, wav_data = wavfile.read(temp_wav)
         if wav_data.dtype == np.int16:
             wav_data = wav_data.astype(np.float32) / 32768.0
@@ -161,7 +166,9 @@ def classify_audio(audio_path, job_id):
         audio_data = mp.tasks.components.containers.AudioData.create_from_array(wav_data, 16000)
         
         # Run classification
+        print("Inference: Running YAMNet forensic analysis...")
         results = classifier.classify(audio_data)
+        print(f"Success: Processed {len(results)} windows.")
         
         all_detections = []
         
@@ -176,14 +183,17 @@ def classify_audio(audio_path, job_id):
                     # We always include detected events in the high-res stream
                     # but only if they meet a slightly higher threshold to keep UI clean
                     if forensic_type != "Ambient / Noise":
-                        # De-bounce logic: if same sound in previous window, maybe only keep best?
-                        # For now, keep all to show "duration" on radar/matrix
+                        decibels = round(20 * np.log10(max(1e-5, category.score)) - 10, 1)
+                        
+                        # PRINT FOR USER TERMINAL (Requested Format)
+                        print(f"[YAMNet] Time: {timestamp:.2f}s | Class: {forensic_type} | Confidence: {category.score:.4f} | Vol: {decibels}dB")
+
                         all_detections.append({
                             "type": forensic_type, # UI uses .type
                             "label": category.category_name,
                             "confidence": float(category.score),
                             "time": round(timestamp, 3),
-                            "decibels": round(20 * np.log10(max(1e-5, category.score)) - 10, 1) # Estimated Power
+                            "decibels": decibels # Estimated Power
                         })
 
         # Summary for status badges (one per category)
@@ -229,4 +239,14 @@ if __name__ == "__main__":
         sys.exit(1)
     
     res = classify_audio(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "job")
-    print(json.dumps(res))
+    
+    # Human-readable summary for terminal
+    if isinstance(res, dict) and res.get("status") == "error":
+        print(f"\n[!] Forensic Analysis Failed: {res.get('message')}")
+    else:
+        num_events = len(res.get("soundEvents", []))
+        print(f"\n[+] Forensic Analysis Successful")
+        print(f"[+] {num_events} Forensic events identified and mapped.")
+
+    # Hidden JSON for API parsing - wrapped in markers
+    print(f"\n[JSON_START]{json.dumps(res)}[JSON_END]")
