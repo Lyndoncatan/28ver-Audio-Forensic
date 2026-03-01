@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 
-export const maxDuration = 300;
+export const maxDuration = 900; // Increased to 15 minutes for longer files
 
 async function runPython(scriptName: string, args: string[]): Promise<any> {
   return new Promise((resolve, reject) => {

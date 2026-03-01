@@ -235,7 +235,7 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                     etype = event.get("type", "").lower()
                     conf = event.get("confidence", 0)
                     
-                    if conf < 0.01: continue # Higher sensitivity
+                    if conf < 0.005: continue # Matching classifier sensitivity
 
                     target_stem = None
                     for stem_key, trigger_word in stems_to_generate.items():

@@ -226,19 +226,21 @@ export default function SonarView({
       const responseBlob = await fetch(audioData.url);
       const audioBlob = await responseBlob.blob();
 
-      // 2. Convert to Base64 (API expects JSON body, not FormData)
-      const base64Data = await fileToBase64(audioBlob);
+      // 2. Prepare FormData (Much better for large audio files)
       const safeFileName = (audioData.name || "audio.wav").replace(/[^a-z0-9.]/gi, "_").toLowerCase();
+      const formData = new FormData();
+      formData.append("audio", audioBlob, safeFileName);
 
-      // 3. POST as JSON to match your route.ts
+      // 3. POST as FormData
       const response = await fetch("/api/classify-audio", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audioData: base64Data,
-          filename: safeFileName
-        })
+        body: formData
       });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Forensic Engine failed to respond");
+      }
 
       const result = await response.json();
 

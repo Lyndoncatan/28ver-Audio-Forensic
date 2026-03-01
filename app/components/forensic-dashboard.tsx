@@ -11,6 +11,8 @@ interface ForensicDashboardProps {
     currentTime: number
     activeEvents?: any[]
     audioRef?: React.RefObject<HTMLAudioElement>
+    externalOscilloscopeRef?: React.RefObject<HTMLCanvasElement>
+    externalSpectrogramRef?: React.RefObject<HTMLCanvasElement>
 }
 
 export default function ForensicDashboard({
@@ -18,10 +20,15 @@ export default function ForensicDashboard({
     isPlaying,
     currentTime,
     activeEvents = [],
-    audioRef
+    audioRef,
+    externalOscilloscopeRef,
+    externalSpectrogramRef
 }: ForensicDashboardProps) {
-    const oscilloscopeRef = useRef<HTMLCanvasElement>(null)
-    const spectrogramRef = useRef<HTMLCanvasElement>(null)
+    const internalOscilloscopeRef = useRef<HTMLCanvasElement>(null)
+    const internalSpectrogramRef = useRef<HTMLCanvasElement>(null)
+
+    const oscilloscopeRef = externalOscilloscopeRef || internalOscilloscopeRef
+    const spectrogramRef = externalSpectrogramRef || internalSpectrogramRef
     const [analyser, setAnalyser] = useState<AnalyserNode | null>(null)
     const [dataArray, setDataArray] = useState<Uint8Array | null>(null)
     const requestRef = useRef<number>()
@@ -63,7 +70,7 @@ export default function ForensicDashboard({
     // Animation Loop
     const animate = () => {
         if (analyser && dataArray && isPlaying) {
-            analyser.getByteTimeDomainData(dataArray)
+            analyser.getByteTimeDomainData(dataArray as any)
             drawOscilloscope(dataArray)
 
             const freqData = new Uint8Array(analyser.frequencyBinCount)
