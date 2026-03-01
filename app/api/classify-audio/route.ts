@@ -102,29 +102,16 @@ export async function POST(request: NextRequest) {
     const outputDir = path.join(process.cwd(), "public", "separated_audio");
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
-    // Pass the PATH to the file, not the actual audio string
+    // Only run Classification (YAMNet) - FAST
     const classification = await runPython("mediapipe_audio_classifier.py", [
       `"${tempFilePath}"`,
       `"${jobID}"`
     ]);
 
-    // Save classification to a file so audio_separator can derive stems from it
-    const classificationPath = path.join(os.tmpdir(), `${jobID}_classification.json`);
-    fs.writeFileSync(classificationPath, JSON.stringify(classification));
-
-    const separation = await runPython("audio_separator.py", [
-      `"${tempFilePath}"`,
-      `"${outputDir}"`,
-      `"${jobID}"`,
-      `"${classificationPath}"`
-    ]);
-
     return NextResponse.json({
       status: "Success",
       jobID,
-      classification,
-      stems: separation.stems,
-      debug: separation.debug // Return debug info for inspection
+      classification
     });
 
   } catch (error: any) {
@@ -133,12 +120,11 @@ export async function POST(request: NextRequest) {
       {
         status: "Error",
         error: error.message,
-        details: "The forensic engine failed to process the audio. Check backend logs."
+        details: "The classification engine failed. Check backend logs."
       },
       { status: 500 }
     );
   } finally {
-    // Cleanup the temp file after processing is done
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try { fs.unlinkSync(tempFilePath); } catch (e) { }
     }

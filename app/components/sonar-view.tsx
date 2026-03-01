@@ -222,47 +222,53 @@ export default function SonarView({
     if (!audioData?.url) return;
     setIsSeparating(true);
     try {
-      // 1. Fetch the blob from the local URL
+      // PHASE 1: HIGH-SPEED CLASSIFICATION (YAMNet)
       const responseBlob = await fetch(audioData.url);
       const audioBlob = await responseBlob.blob();
-
-      // 2. Prepare FormData (Much better for large audio files)
       const safeFileName = (audioData.name || "audio.wav").replace(/[^a-z0-9.]/gi, "_").toLowerCase();
+
       const formData = new FormData();
       formData.append("audio", audioBlob, safeFileName);
 
-      // 3. POST as FormData
-      const response = await fetch("/api/classify-audio", {
+      const classResponse = await fetch("/api/classify-audio", {
         method: "POST",
         body: formData
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || "Forensic Engine failed to respond");
+      if (!classResponse.ok) throw new Error("Classification failed");
+      const classResult = await classResponse.json();
+
+      // Update UI with Radar/Matrix results IMMEDIATELY
+      if (setAudioData && classResult.classification) {
+        setAudioData((prev: any) => ({
+          ...prev,
+          analysisResults: {
+            ...classResult.classification,
+            frequencySpectrum: prev.analysisResults?.frequencySpectrum || []
+          }
+        }));
+        if (setShowStems) setShowStems(true); // Show track containers immediately
       }
 
-      const result = await response.json();
+      // PHASE 2: DEEP FORENSIC SEPARATION (Demucs)
+      const sepFormData = new FormData();
+      sepFormData.append("audio", audioBlob, safeFileName);
+      sepFormData.append("classification", JSON.stringify(classResult.classification));
 
-      // 4. Update UI with the job-specific stems AND Classification
-      if (result.status === "Success" || result.stems) {
-        if (setCurrentStems) setCurrentStems(result.stems);
+      const sepResponse = await fetch("/api/separate-audio", {
+        method: "POST",
+        body: sepFormData
+      });
+
+      if (!sepResponse.ok) throw new Error("Separation failed");
+      const sepResult = await sepResponse.json();
+
+      // Update UI with Stems
+      if (sepResult.stems) {
+        if (setCurrentStems) setCurrentStems(sepResult.stems);
         if (setShowStems) setShowStems(true);
-
-        // CRITICAL FIX: Update the parent audioData with the fresh classification events
-        // AND preserve/update frequencySpectrum to prevent blank charts
-        if (setAudioData && result.classification) {
-          setAudioData((prev: any) => ({
-            ...prev,
-            analysisResults: {
-              ...result.classification,
-              frequencySpectrum: result.frequencySpectrum || prev.analysisResults?.frequencySpectrum || []
-            }
-          }));
-        }
-      } else {
-        throw new Error(result.error || "Extraction failed");
       }
+
     } catch (error: any) {
       console.error("Deconstruct Error:", error);
       alert(`Forensic Engine Error: ${error.message}`);
