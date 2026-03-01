@@ -79,7 +79,7 @@ function ForensicTrack({ url, label, color, icon: Icon, masterPlaying, masterTim
             <div className="flex items-center gap-2 mt-1">
               {!isEmpty && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />}
               <span className={`text-[9px] font-mono tracking-tighter uppercase ${isEmpty ? 'text-slate-600' : 'text-slate-500'}`}>
-                {isSeparating ? "Isolating..." : (isEmpty ? "NOT_DETECTED" : "Signal_Isolated")}
+                {isSeparating ? "Isolating..." : (isEmpty ? "None_Identified" : "Signal_Isolated")}
               </span>
             </div>
             {/* NEW: Stats Display */}

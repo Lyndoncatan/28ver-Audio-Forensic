@@ -1,12 +1,14 @@
 import numpy as np
 import json
 import sys
-import base64
 import os
 import warnings
 import tempfile
 import subprocess
 from scipy.io import wavfile
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import audio
 
 # Silence all background noise from TensorFlow/MediaPipe
 warnings.filterwarnings("ignore")
@@ -16,24 +18,40 @@ def get_yamnet_model_path():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(script_dir, 'yamnet.tflite')
     if not os.path.exists(model_path):
+        model_path = os.path.join(os.getcwd(), 'scripts', 'yamnet.tflite')
+    if not os.path.exists(model_path):
         raise FileNotFoundError(f"YAMNet model missing at {model_path}")
     return model_path
 
 def map_to_forensic_category(mediapipe_category):
     mapping = {
+        # Human Voice
         "Speech": "Human Voice",
         "Singing": "Human Voice",
         "Male speech": "Human Voice",
         "Female speech": "Human Voice",
         "Conversation": "Human Voice",
+        "Laughter": "Human Voice",
+        "Screaming": "Scream / Aggression",
+        "Shout": "Scream / Aggression",
+        "Yell": "Scream / Aggression",
+        
+        # Musical Content
         "Music": "Musical Content",
         "Background music": "Musical Content",
+        "Strum": "Musical Content",
+        "Guitar": "Musical Content",
+        
+        # Vehicle Sound
         "Vehicle": "Vehicle Sound",
         "Car": "Vehicle Sound",
         "Bus": "Vehicle Sound",
         "Truck": "Vehicle Sound",
         "Motorcycle": "Vehicle Sound",
         "Engine": "Vehicle Sound",
+        "Accelerating": "Vehicle Sound",
+        
+        # Siren / Alarm
         "Emergency vehicle": "Siren / Alarm",
         "Police car": "Siren / Alarm",
         "Ambulance": "Siren / Alarm",
@@ -41,149 +59,145 @@ def map_to_forensic_category(mediapipe_category):
         "Siren": "Siren / Alarm",
         "Alarm": "Siren / Alarm",
         "Buzzer": "Siren / Alarm",
+        "Whistle": "Siren / Alarm",
+        "Wind": "Siren / Alarm",
+        
+        # Gunshot / Explosion
         "Gunshot": "Gunshot / Explosion",
         "Explosion": "Gunshot / Explosion",
         "Cap gun": "Gunshot / Explosion",
         "Fusillade": "Gunshot / Explosion",
         "Artillery": "Gunshot / Explosion",
         "Machine gun": "Gunshot / Explosion",
-        "Screaming": "Scream / Aggression",
-        "Shout": "Scream / Aggression",
-        "Yell": "Scream / Aggression",
-        "Crying": "Scream / Aggression",
-        "Footsteps": "Footsteps",
-        "Walk": "Footsteps",
-        "Run": "Footsteps",
-        "Animal": "Animal Signal",
-        "Dog": "Animal Signal",
-        "Cat": "Animal Signal",
-        "Bird": "Animal Signal",
-        "Wind": "Atmospheric Wind",
-        "Thunder": "Atmospheric Wind",
-        "Glass": "Impact / Breach",
-        "Shatter": "Impact / Breach",
-        "Smash": "Impact / Breach",
-        "Hammer": "Impact / Breach",
-        "Door": "Impact / Breach",
-        "Knock": "Impact / Breach",
-        "Slam": "Impact / Breach"
+        "Firecracker": "Gunshot / Explosion",
+        "Burst": "Gunshot / Explosion",
+        "Crack": "Gunshot / Explosion",
+        "Pop": "Gunshot / Explosion",
+        "Slam": "Gunshot / Explosion",
+        "Thump": "Gunshot / Explosion",
+        "Hammer": "Gunshot / Explosion",
+        "Shatter": "Gunshot / Explosion"
     }
     
-    # Try partial match to find forensic labels
+    # Exact match
+    if mediapipe_category in mapping:
+        return mapping[mediapipe_category]
+    
+    # Partial match
+    cat_lower = mediapipe_category.lower()
     for key, value in mapping.items():
-        if key.lower() in mediapipe_category.lower():
+        if key.lower() in cat_lower:
             return value
-    return None
+            
+    return "Ambient / Noise"
 
 def convert_to_wav(input_path):
-    """
-    Converts input audio to standard WAV (16kHz, mono) using FFmpeg.
-    Returns path to the converted temp file.
-    """
+    temp_wav = tempfile.mktemp(suffix=".wav")
     try:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-        tmp.close()
-        output_path = tmp.name
-        cmd = [
-            "ffmpeg", "-y", 
-            "-i", input_path, 
-            "-ar", "16000", 
-            "-ac", "1", 
-            output_path
-        ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        return output_path
-    except Exception:
-        return input_path
+        subprocess.run([
+            'ffmpeg', '-y', '-i', input_path,
+            '-ar', '16000', '-ac', '1',
+            '-c:a', 'pcm_s16le', temp_wav
+        ], check=True, capture_output=True)
+        return temp_wav
+    except Exception as e:
+        print(f"Error converting audio with ffmpeg: {e}", file=sys.stderr)
+        return None
 
 def classify_audio(audio_path, job_id):
-    converted_path = None
+    temp_wav = None
     try:
         audio_path = audio_path.strip('"')
         if not os.path.exists(audio_path):
             return {"status": "error", "message": f"File not found: {audio_path}"}
 
-        try:
-            sample_rate, wav_data = wavfile.read(audio_path)
-        except Exception:
-            converted_path = convert_to_wav(audio_path)
-            try:
-                sample_rate, wav_data = wavfile.read(converted_path)
-            except Exception as e:
-                return {"status": "error", "message": f"Error reading wav file: {str(e)}"}
+        temp_wav = convert_to_wav(audio_path)
+        if not temp_wav:
+             return {"status": "error", "message": "Failed to normalize audio"}
+
+        model_path = get_yamnet_model_path()
         
-        if wav_data.dtype == np.int16:
-            wav_data = wav_data.astype(float) / 32768.0
-        if len(wav_data.shape) > 1:
-            wav_data = np.mean(wav_data, axis=1)
-
-        from mediapipe.tasks import python
-        from mediapipe.tasks.python.components import containers
-        from mediapipe.tasks.python import audio
-
+        base_options = python.BaseOptions(model_asset_path=model_path)
+        # Using a higher max_results to capture multiple overlapping sounds
         options = audio.AudioClassifierOptions(
-            base_options=python.BaseOptions(model_asset_path=get_yamnet_model_path()),
-            max_results=10, # Increased to catch multiple sounds
-            score_threshold=0.05
+            base_options=base_options,
+            max_results=20,
+            score_threshold=0.005  # Forensic sensitivity
         )
+        classifier = audio.AudioClassifier.create_from_options(options)
+
+        sample_rate, wav_data = wavfile.read(temp_wav)
+        if wav_data.dtype == np.int16:
+            wav_data = wav_data.astype(np.float32) / 32768.0
+            
+        audio_data = mp.tasks.components.containers.AudioData.create_from_array(wav_data, 16000)
         
-        with audio.AudioClassifier.create_from_options(options) as classifier:
-            audio_clip = containers.AudioData.create_from_array(wav_data.astype(np.float32), sample_rate)
-            results = classifier.classify(audio_clip)
+        # results is a list of AudioClassifierResult (one per window)
+        results = classifier.classify(audio_data)
+        
+        all_detections = []
+        
+        # AudioData metadata tells us the timestamp of each result
+        # YAMNet windows are ~0.975s with 50% overlap typically
+        for i, discovery in enumerate(results):
+            # i * window_step
+            # YAMNet step is usually 0.48s
+            timestamp = i * 0.48 
             
-            print(f"--- Running Model: YAMNet / MediaPipe (Results: {len(results)}) ---", file=sys.stderr)
-            
-            events = []
-            for idx, res in enumerate(results):
-                if res.classifications:
-                    # Iterate through ALL categories to find forensic matches
-                    for category in res.classifications[0].categories:
-                        forensic_cat = map_to_forensic_category(category.category_name)
-                        if forensic_cat:
-                            confidence = round(category.score, 4)
-                            decibels = round(-60 + (category.score * 60), 1)
-                            time_sec = round(idx * 0.975, 2)
-                            
-                            # Log every detection for debugging
-                            print(f"[YAMNet] {time_sec}s | {category.category_name} -> {forensic_cat} | Conf: {confidence}", file=sys.stderr)
-                            
-                            events.append({
-                                "time": time_sec,
-                                "type": forensic_cat,
-                                "confidence": confidence,
-                                "decibels": decibels
-                            })
-            
-            # Deduplicate same-time same-type events
-            unique_events = {}
-            for e in events:
-                key = (e["time"], e["type"])
-                if key not in unique_events or e["confidence"] > unique_events[key]["confidence"]:
-                    unique_events[key] = e
-            
-            events = list(unique_events.values())
-            events.sort(key=lambda x: x["time"])
-            
-            print("--- Classification Complete ---", file=sys.stderr)
+            for classification in discovery.classifications:
+                for category in classification.categories:
+                    forensic_type = map_to_forensic_category(category.category_name)
+                    if forensic_type != "Ambient / Noise":
+                        all_detections.append({
+                            "type": forensic_type,
+                            "label": category.category_name,
+                            "confidence": float(category.score),
+                            "time": round(timestamp, 3)
+                        })
 
-            if converted_path and converted_path != audio_path and os.path.exists(converted_path):
-                os.unlink(converted_path)
+        # Summary per category for the UI
+        required_ui_categories = [
+            "Human Voice", "Musical Content", "Gunshot / Explosion", 
+            "Siren / Alarm", "Scream / Aggression", "Vehicle Sound"
+        ]
+        
+        summary_events = []
+        for cat in required_ui_categories:
+            cat_matches = [d for d in all_detections if d["type"] == cat]
+            if cat_matches:
+                best = max(cat_matches, key=lambda x: x["confidence"])
+                summary_events.append({
+                    "category": cat,
+                    "status": "DETECTED",
+                    "confidence": round(best["confidence"] * 100, 1),
+                    "details": f"Detected: {best['label']} at various intervals"
+                })
+            else:
+                summary_events.append({
+                    "category": cat,
+                    "status": "NOT_DETECTED",
+                    "confidence": 0,
+                    "details": "None identified"
+                })
 
-            return {
-                "status": "success",
-                "jobID": job_id,
-                "detectedSounds": len(events),
-                "soundEvents": events
-            }
-            
+        return {
+            "jobID": job_id,
+            "soundEvents": summary_events,
+            "allDetections": all_detections, # Used by audio_separator.py
+            "summary": f"Analyzed forensic profile. Found {len([s for s in summary_events if s['status'] == 'DETECTED'])} categories."
+        }
+        
     except Exception as e:
-        if converted_path and os.path.exists(converted_path):
-            os.unlink(converted_path)
         return {"status": "error", "message": str(e)}
+    finally:
+        if temp_wav and os.path.exists(temp_wav):
+            try: os.unlink(temp_wav)
+            except: pass
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        output = classify_audio(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "job")
-        sys.stdout.write(json.dumps(output))
-    else:
-        sys.stdout.write(json.dumps({"status": "error", "message": "No input"}))
+    if len(sys.argv) < 2:
+        print(json.dumps({"status": "error", "message": "Usage: python classifier.py <audio_path> [job_id]"}))
+        sys.exit(1)
+    
+    res = classify_audio(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "job")
+    print(json.dumps(res))

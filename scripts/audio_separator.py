@@ -203,10 +203,7 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                 
                 # 1. SPECIALIZED SPECTRAL PRE-PROCESSING
                 # Separate Harmonic (Voice/Music) from Percussive (Gunshots/Footsteps/Impacts)
-                log("Performing Harmonic-Percussive Source Separation (HPSS)...")
-                # Power-based separation is better for forensic gating
-                # Higher margin for more distinct separation
-                harmonic, percussive = librosa.effects.hpss(y, margin=(1.0, 6.0))
+                harmonic, percussive = librosa.effects.hpss(y, margin=(1.2, 2.5))
                 
                 # Prepare empty containers (silence) for forensic stems
                 stems_to_generate = {
@@ -222,9 +219,9 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                     "impact": "Impact / Breach"
                 }
 
-                # HIGHER SENSITIVITY: Consider any sound with > 0.02 confidence if it matches forensic type
-                events = classification_data.get("soundEvents", [])
-                log(f"Gating {len(events)} detected events...")
+                # LOWER SENSITIVITY: Consider any sound with > 0.005 confidence
+                events = classification_data.get("allDetections", [])
+                log(f"Gating {len(events)} detected forensic events...")
                 
                 # Initialize forensic stems with zeros (silence)
                 generated_audio = { key: np.zeros_like(y) for key in stems_to_generate }
@@ -240,6 +237,7 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
 
                     target_stem = None
                     for stem_key, trigger_word in stems_to_generate.items():
+                        # Match both the 'type' (Forensic Category) and the 'label' (Specific sound)
                         if trigger_word.lower() in etype or etype in trigger_word.lower():
                             target_stem = stem_key
                             break
@@ -278,12 +276,9 @@ def separate_audio(input_path, output_dir, job_id, classification_path=None):
                                 threshold = peak * 0.15 # Stronger gate
                                 segment[np.abs(segment) < threshold] = 0
                             
-                            # Smooth fade
-                            fade = int(0.05 * sr)
-                            if len(segment) > fade * 2:
-                                segment[:fade] *= np.linspace(0, 1, fade)
-                                segment[-fade:] *= np.linspace(1, 0, fade)
-
+                            # Boost the isolated signal (X2) to make it stand out
+                            segment = segment * 2.0
+                            
                             generated_audio[target_stem][start_idx:end_idx] += segment
                             count_generated += 1
 
