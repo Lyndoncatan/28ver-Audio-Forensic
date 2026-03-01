@@ -27,14 +27,22 @@ async function runPython(scriptName: string, args: string[]): Promise<any> {
             reject(new Error(`Timeout executing ${scriptName}. Engine took too long.`));
         }, 1200000); // 20 Minutes
 
+        let isCapturingJson = false;
+
         python.stdout.on("data", (data) => {
             const msg = data.toString();
             stdout += msg;
-            // Only log if NOT part of the JSON payload
-            if (!msg.includes("[JSON_START]")) {
+
+            if (msg.includes("[JSON_START]")) {
+                isCapturingJson = true;
+            }
+
+            // Only print to terminal if we aren't in the middle of a JSON payload
+            if (!isCapturingJson) {
                 process.stdout.write(msg);
             }
         });
+
         python.stderr.on("data", (data) => {
             const msg = data.toString();
             stderr += msg;

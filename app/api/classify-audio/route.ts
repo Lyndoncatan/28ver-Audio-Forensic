@@ -29,19 +29,26 @@ async function runPython(scriptName: string, args: string[]): Promise<any> {
       reject(new Error(`Timeout executing ${scriptName}. The operation took too long (20 min).`));
     }, 1200000); // 20 Minutes
 
+    let isCapturingJson = false;
+
     python.stdout.on("data", (data) => {
       const msg = data.toString();
       stdout += msg;
-      // Only log if NOT part of the JSON payload
-      if (!msg.includes("[JSON_START]")) {
-        process.stdout.write(msg); // Write raw for perfect formatting (progress bars)
+
+      if (msg.includes("[JSON_START]")) {
+        isCapturingJson = true;
+      }
+
+      // Only print to terminal if we aren't in the middle of a JSON payload
+      if (!isCapturingJson) {
+        process.stdout.write(msg);
       }
     });
 
     python.stderr.on("data", (data) => {
       const msg = data.toString();
       stderr += msg;
-      process.stderr.write(msg); // Write raw for progress bars
+      process.stderr.write(msg);
     });
 
     python.on("close", (code) => {
